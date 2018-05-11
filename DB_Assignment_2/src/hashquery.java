@@ -41,7 +41,7 @@ public class hashquery implements dbimpl
     {
         boolean isValidInt = false;
         try {
-            Long.parseLong(s);
+            Integer.parseInt(s);
             isValidInt = true;
         }
         catch (NumberFormatException e) {
@@ -55,13 +55,8 @@ public class hashquery implements dbimpl
    {
         File heapfile = new File(HEAP_FNAME + pagesize);
         File hashfile = new File(HASH_FNAME + pagesize);
-        int intSize = 4;
-        int pageCount = 0;
         int recCount = 0;
-        int recordLen = 0;
-        int rid = 0;
-        boolean isNextPage = true;
-        boolean isNextRecord = true;
+        int totalBucketScanned = 0;
         
         //Buckets variables
         int totalBuckets = (MAXIMUM_RECORDS * INDEX_SIZE / pagesize);
@@ -69,8 +64,7 @@ public class hashquery implements dbimpl
         if (modBucket > 0) {
             totalBuckets++;
         }
-        int recordsInPage = pagesize / INDEX_SIZE;
-        System.out.println("Number of records in one page: " + recordsInPage);        
+        int recordsInPage = pagesize / INDEX_SIZE;    
         
         try
         {
@@ -79,86 +73,47 @@ public class hashquery implements dbimpl
             boolean foundRecord = false;
             
             int queryHashCode = Math.abs(query.toLowerCase().hashCode());
-            System.out.println("Hashcode: " + queryHashCode);
             int currentBucket = queryHashCode % totalBuckets;
-            System.out.println("Bucket: " + currentBucket);
-            int pointer = 0;
             long skipPointer = (long)(currentBucket * pagesize);
+            fisHash.skip(skipPointer);
             
             while (!foundRecord) {
-                byte[] bPage3 = new byte[pagesize];
-                fisHash.skip(skipPointer);
-                fisHash.read(bPage3, 0, INDEX_SIZE);
-                System.out.println(new String(bPage3));
-                foundRecord = true;
-            }
-            
-            // TESTING
-            byte[] bPage2 = new byte[pagesize];
-            // TESTING
-            fisHeap.skip(4096);
-            fisHeap.read(bPage2, 0, RECORD_SIZE);            
-            // TESTING
-            fisHeap.skip(-(4096 + RECORD_SIZE));
-            fisHeap.read(bPage2, 0, RECORD_SIZE);
-            // TESTING
-            fisHeap.skip(-(0 + RECORD_SIZE));
-            fisHeap.skip(297);
-            fisHeap.read(bPage2, 0, RECORD_SIZE);
-            // TESTING		 
-            fisHeap.skip(-(297 + RECORD_SIZE));
-            fisHeap.read(bPage2, 0, RECORD_SIZE);            
-            // TESTING
-            fisHeap.skip(-(0 + RECORD_SIZE));
-            
-            
-            isNextPage = false;
-            // reading page by page
-            while (isNextPage)
-            {
-                byte[] bPage = new byte[pagesize];
-                byte[] bPageNum = new byte[intSize];
-                fisHeap.read(bPage, 0, pagesize);
-                System.arraycopy(bPage, bPage.length-intSize, bPageNum, 0, intSize);			
-
-                // reading by record, return true to read the next record
-                isNextRecord = true;
-                while (isNextRecord)
-                {
-                    byte[] bRecord = new byte[RECORD_SIZE];
-                    byte[] bRid = new byte[intSize];
-                    try
-                    {
-                        System.arraycopy(bPage, recordLen, bRecord, 0, RECORD_SIZE);
-                        System.arraycopy(bRecord, 0, bRid, 0, intSize);
-                        rid = ByteBuffer.wrap(bRid).getInt();				  
-                        if (rid != recCount) {
-                           isNextRecord = false;
-                        }
-                        else {
-                            recordLen += RECORD_SIZE;
-                        }
-                        recCount++;
-                        // if recordLen exceeds pagesize, catch this to reset to next page
+                byte[] bLocation = new byte[INDEX_SIZE];
+                byte[] bRecord = new byte[RECORD_SIZE];                
+                fisHash.read(bLocation, 0, INDEX_SIZE);
+                String locationString = new String(bLocation).replace("\0", "");
+                
+                if (isInteger(locationString)) {
+                    long location = Long.parseLong(locationString);                                    
+                    if (location != -1) {
+                        fisHeap.skip(location);
+                        fisHeap.read(bRecord, 0, RECORD_SIZE);
+                        fisHeap.skip((location + RECORD_SIZE) * -1);
+                        foundRecord = findRecord(bRecord, query);
                     }
-                    catch (ArrayIndexOutOfBoundsException e)
-                    {
-                        isNextRecord = false;
-                        recordLen = 0;
+                }
+                recCount++;
+                if (!foundRecord) {
+                    if (recCount == recordsInPage) {
+                        fisHash.read(bLocation, 0, (pagesize % INDEX_SIZE));
+                        currentBucket++;
+                        totalBucketScanned++;                                  
+                        if (totalBucketScanned == totalBuckets) {
+                            foundRecord = true;
+                        }
+                        if (currentBucket == totalBuckets) {
+                            currentBucket = 0;
+                            fisHash.skip((totalBuckets * pagesize) * -1);
+                        }                        
                         recCount = 0;
-                        rid = 0;
                     }
                 }
-                // check to complete all pages
-                if (ByteBuffer.wrap(bPageNum).getInt() != pageCount)
-                {
-                    isNextPage = false;
-                    // TESTING
-                    FileOutputStream fos = new FileOutputStream(hashfile);
-                    fos.close();
-                }
-                pageCount++;		
             }
+            
+            if (foundRecord && (totalBucketScanned == totalBuckets)) {
+                System.out.println("There's no matching record in the database");
+            }
+            
         }
         catch (FileNotFoundException e) {
             System.out.println("File: " + HEAP_FNAME + pagesize + " not found.");
@@ -169,12 +124,41 @@ public class hashquery implements dbimpl
    }
 
     // returns records containing the argument text from shell
-    public int hashRecord(byte[] rec, int totalBuckets)
+    public boolean findRecord(byte[] rec, String input)
     {
         String record = new String(rec);
         String BN_NAME = record.substring(RID_SIZE+REGISTER_NAME_SIZE,
-                                            RID_SIZE+REGISTER_NAME_SIZE+BN_NAME_SIZE);
-        int bucketNum = Math.abs(BN_NAME.toLowerCase().hashCode()) % totalBuckets;      
-        return bucketNum;
-    }   
+                                            RID_SIZE+REGISTER_NAME_SIZE+BN_NAME_SIZE).replace("\0", "");
+        if (BN_NAME.toLowerCase().equals(input.toLowerCase())) {
+           System.out.println(record.substring(RID_SIZE, RID_SIZE + REGISTER_NAME_SIZE));
+           System.out.println(record.substring(RID_SIZE + REGISTER_NAME_SIZE, RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE));
+           System.out.println(record.substring(RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE,
+                                                RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE + BN_STATUS_SIZE));
+           System.out.println(record.substring(RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE + BN_STATUS_SIZE,
+                   RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE + BN_STATUS_SIZE + BN_REG_DT_SIZE));
+           System.out.println(record.substring(RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE + BN_STATUS_SIZE + BN_REG_DT_SIZE,
+                   RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE + BN_STATUS_SIZE + BN_REG_DT_SIZE + BN_CANCEL_DT_SIZE));
+           System.out.println(record.substring(RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE +
+                                                BN_STATUS_SIZE + BN_REG_DT_SIZE + BN_CANCEL_DT_SIZE,
+                   RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE + BN_STATUS_SIZE + 
+                           BN_REG_DT_SIZE + BN_CANCEL_DT_SIZE + BN_RENEW_DT_SIZE));
+           System.out.println(record.substring(RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE +
+                                                BN_STATUS_SIZE + BN_REG_DT_SIZE + BN_CANCEL_DT_SIZE + BN_RENEW_DT_SIZE,
+                   RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE + BN_STATUS_SIZE + 
+                           BN_REG_DT_SIZE + BN_CANCEL_DT_SIZE + BN_RENEW_DT_SIZE + BN_STATE_NUM_SIZE));
+           System.out.println(record.substring(RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE +
+                                                BN_STATUS_SIZE + BN_REG_DT_SIZE + BN_CANCEL_DT_SIZE +
+                                                BN_RENEW_DT_SIZE + BN_STATE_NUM_SIZE,
+                   RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE + BN_STATUS_SIZE + BN_REG_DT_SIZE +
+                           BN_CANCEL_DT_SIZE + BN_RENEW_DT_SIZE + BN_STATE_NUM_SIZE + BN_STATE_OF_REG_SIZE));
+           System.out.println(record.substring(RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE +
+                                                BN_STATUS_SIZE + BN_REG_DT_SIZE + BN_CANCEL_DT_SIZE +
+                                                BN_RENEW_DT_SIZE + BN_STATE_NUM_SIZE + BN_STATE_OF_REG_SIZE,
+                   RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE + BN_STATUS_SIZE + BN_REG_DT_SIZE +
+                           BN_CANCEL_DT_SIZE + BN_RENEW_DT_SIZE + BN_STATE_NUM_SIZE + BN_STATE_OF_REG_SIZE + BN_ABN_SIZE));
+           return true;
+        } else {
+            return false;
+        }
+    }
 }

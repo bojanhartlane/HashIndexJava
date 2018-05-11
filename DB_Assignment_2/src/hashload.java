@@ -73,6 +73,7 @@ public class hashload implements dbimpl
         System.out.println("Total buckets: " + totalBuckets);
         int recordsInPage = pagesize / INDEX_SIZE;
         System.out.println("Number of records in one page: " + recordsInPage);
+        // Array of indexes that will be loaded into "hash.(pagesize)" file
         int[][] indexes = new int[totalBuckets][recordsInPage];
         for (int i = 0; i < totalBuckets; i++) {
             for (int j = 0; j < recordsInPage; j++) {
@@ -82,36 +83,7 @@ public class hashload implements dbimpl
         
         try
         {
-            FileInputStream fis = new FileInputStream(heapfile);
-            
-            // TESTING
-            // isNextPage = false;
-            // TESTING
-            byte[] bPage2 = new byte[pagesize];
-            // TESTING
-            fis.skip(4096);
-            fis.read(bPage2, 0, RECORD_SIZE);
-            // TESTING
-            hashRecord(bPage2, totalBuckets);
-            // TESTING
-            fis.skip(-(4096 + RECORD_SIZE));
-            fis.read(bPage2, 0, RECORD_SIZE);
-            // TESTING
-            hashRecord(bPage2, totalBuckets);
-            // TESTING
-            fis.skip(-(0 + RECORD_SIZE));
-            fis.skip(297);
-            fis.read(bPage2, 0, RECORD_SIZE);
-            // TESTING
-            hashRecord(bPage2, totalBuckets);
-            // TESTING		 
-            fis.skip(-(297 + RECORD_SIZE));
-            fis.read(bPage2, 0, RECORD_SIZE);
-            // TESTING
-            hashRecord(bPage2, totalBuckets);
-            // TESTING
-            fis.skip(-(0 + RECORD_SIZE));
-            
+            FileInputStream fis = new FileInputStream(heapfile);            
             // reading page by page
             while (isNextPage)
             {
