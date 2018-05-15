@@ -72,7 +72,7 @@ public class hashload implements dbimpl
             totalBuckets++;
         }
         System.out.println("Total buckets: " + totalBuckets);
-        // Maximum number of records in a bucket
+        // Maximum number of slots in a bucket
         int slotsInBucket = pagesize / SLOT_SIZE;
         System.out.println("Number of records in one bucket: " + slotsInBucket);
         // Array of indexes that will be loaded into "hash.<pagesize>" file

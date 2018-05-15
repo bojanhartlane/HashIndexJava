@@ -106,11 +106,14 @@ public class hashquery implements dbimpl
                 }
                 
                 recCount++;
+                // If the record is not a match, keep looking for the matching record by checking the other slots
                 if (!foundRecord) {
                     if (recCount == slotsInBucket) {
                         disHash.read(bLocation, 0, (pagesize % SLOT_SIZE));
                         currentBucket++;
-                        totalBucketScanned++;                                  
+                        totalBucketScanned++;                    
+                        // This is for worst-case scenario where all slots are full and have been scanned,
+                        // but there is no matching record found
                         if (totalBucketScanned == totalBuckets) {
                             foundRecord = true;
                         }
