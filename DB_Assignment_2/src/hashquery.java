@@ -1,3 +1,4 @@
+import java.io.DataInputStream;
 import java.nio.ByteBuffer;
 import java.io.IOException;
 import java.io.FileNotFoundException;
@@ -11,7 +12,7 @@ import java.io.FileOutputStream;
 
 public class hashquery implements dbimpl
 {
-    // initialize
+    // Initialize
     public static void main(String args[])
     {
         hashquery load = new hashquery();
@@ -23,12 +24,12 @@ public class hashquery implements dbimpl
         System.out.println("Query time: " + (endTime - startTime) + "ms");
     }
 
-    // reading command line arguments
+    // Reading command line arguments
     public void readArguments(String args[])
     {
         if (args.length == 2) {
             if (isInteger(args[1])) {
-              readIndex(args[0], Integer.parseInt(args[1]));
+              readIndex(args[0].trim(), Integer.parseInt(args[1]));
             }
         }
         else {
@@ -36,7 +37,7 @@ public class hashquery implements dbimpl
         }
     }
 
-    // check if pagesize is a valid integer
+    // Check if pagesize is a valid integer
     public boolean isInteger(String s)
     {
         boolean isValidInt = false;
@@ -50,7 +51,7 @@ public class hashquery implements dbimpl
         return isValidInt;
     }
 
-   // read heapfile by page
+   // Read "hash.<pagesize>" file one bucket at a time
    public void readIndex(String query, int pagesize)
    {
         File heapfile = new File(HEAP_FNAME + pagesize);
@@ -59,43 +60,55 @@ public class hashquery implements dbimpl
         int totalBucketScanned = 0;
         
         //Buckets variables
-        int totalBuckets = (MAXIMUM_RECORDS * INDEX_SIZE / pagesize);
-        int modBucket = (MAXIMUM_RECORDS * INDEX_SIZE) % pagesize;
+        int totalBuckets = (MAXIMUM_RECORDS * SLOT_SIZE / pagesize);
+        int modBucket = (MAXIMUM_RECORDS * SLOT_SIZE) % pagesize;
         if (modBucket > 0) {
             totalBuckets++;
         }
-        int recordsInPage = pagesize / INDEX_SIZE;    
+        int slotsInBucket = pagesize / SLOT_SIZE;    
         
         try
         {
-            FileInputStream fisHash = new FileInputStream(hashfile);
+            DataInputStream disHash = new DataInputStream(new FileInputStream(hashfile));
             FileInputStream fisHeap = new FileInputStream(heapfile);
+            // Boolean to check if the matching record has been found or not
             boolean foundRecord = false;
-            
+            // Calculate the hash code of the query
             int queryHashCode = Math.abs(query.toLowerCase().hashCode());
+            // Calculate the starting bucket position to search matching record
             int currentBucket = queryHashCode % totalBuckets;
+            // long variable to start reading the file from the bucket location instead of from the beginning
             long skipPointer = (long)(currentBucket * pagesize);
-            fisHash.skip(skipPointer);
+            // Skip reading the hash file to the bucket location
+            disHash.skip(skipPointer);
             
+            // Keep reading until the matching record is found or until all records are scanned
             while (!foundRecord) {
-                byte[] bLocation = new byte[INDEX_SIZE];
-                byte[] bRecord = new byte[RECORD_SIZE];                
-                fisHash.read(bLocation, 0, INDEX_SIZE);
-                String locationString = new String(bLocation).replace("\0", "");
+                byte[] bLocation = new byte[SLOT_SIZE];
+                byte[] bRecord = new byte[RECORD_SIZE];
+                int location = disHash.readInt();      
                 
-                if (isInteger(locationString)) {
-                    long location = Long.parseLong(locationString);                                    
-                    if (location != -1) {
-                        fisHeap.skip(location);
-                        fisHeap.read(bRecord, 0, RECORD_SIZE);
-                        fisHeap.skip((location + RECORD_SIZE) * -1);
-                        foundRecord = findRecord(bRecord, query);
-                    }
+                // Only check if the slot contains a record location
+                if (location != -1) {
+                    /*
+                    * Move the reading pointer of the heap file to a particular record's location,
+                    * read the particular record,
+                    * and then move the reading pointer back to the beginning of the heap file
+                    */
+                    fisHeap.skip(location);
+                    fisHeap.read(bRecord, 0, RECORD_SIZE);
+                    fisHeap.skip((location + RECORD_SIZE) * -1);
+                    // Check if the record is equal with the query or not
+                    foundRecord = findRecord(bRecord, query);
+                } else {
+                    foundRecord = true;
+                    totalBucketScanned = totalBuckets;
                 }
+                
                 recCount++;
                 if (!foundRecord) {
-                    if (recCount == recordsInPage) {
-                        fisHash.read(bLocation, 0, (pagesize % INDEX_SIZE));
+                    if (recCount == slotsInBucket) {
+                        disHash.read(bLocation, 0, (pagesize % SLOT_SIZE));
                         currentBucket++;
                         totalBucketScanned++;                                  
                         if (totalBucketScanned == totalBuckets) {
@@ -103,15 +116,16 @@ public class hashquery implements dbimpl
                         }
                         if (currentBucket == totalBuckets) {
                             currentBucket = 0;
-                            fisHash.skip((totalBuckets * pagesize) * -1);
+                            disHash.skip((totalBuckets * pagesize) * -1);
                         }                        
                         recCount = 0;
                     }
                 }
             }
             
+            // Return warning message about no matching record in database
             if (foundRecord && (totalBucketScanned == totalBuckets)) {
-                System.out.println("There's no matching record in the database");
+                System.out.println("There's no matching record found in the database");
             }
             
         }
@@ -123,40 +137,19 @@ public class hashquery implements dbimpl
         }
    }
 
-    // returns records containing the argument text from shell
+    // Compare BN_NAME of a record with the query.
+    // If they're a match, return true and print the record on the screen.
+    // If they're not a match, return false.
     public boolean findRecord(byte[] rec, String input)
     {
         String record = new String(rec);
+        // Get the BN_NAME field only and remove null characters from BN_NAME field
         String BN_NAME = record.substring(RID_SIZE+REGISTER_NAME_SIZE,
                                             RID_SIZE+REGISTER_NAME_SIZE+BN_NAME_SIZE).replace("\0", "");
+        
         if (BN_NAME.toLowerCase().equals(input.toLowerCase())) {
-           System.out.println(record.substring(RID_SIZE, RID_SIZE + REGISTER_NAME_SIZE));
-           System.out.println(record.substring(RID_SIZE + REGISTER_NAME_SIZE, RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE));
-           System.out.println(record.substring(RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE,
-                                                RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE + BN_STATUS_SIZE));
-           System.out.println(record.substring(RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE + BN_STATUS_SIZE,
-                   RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE + BN_STATUS_SIZE + BN_REG_DT_SIZE));
-           System.out.println(record.substring(RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE + BN_STATUS_SIZE + BN_REG_DT_SIZE,
-                   RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE + BN_STATUS_SIZE + BN_REG_DT_SIZE + BN_CANCEL_DT_SIZE));
-           System.out.println(record.substring(RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE +
-                                                BN_STATUS_SIZE + BN_REG_DT_SIZE + BN_CANCEL_DT_SIZE,
-                   RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE + BN_STATUS_SIZE + 
-                           BN_REG_DT_SIZE + BN_CANCEL_DT_SIZE + BN_RENEW_DT_SIZE));
-           System.out.println(record.substring(RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE +
-                                                BN_STATUS_SIZE + BN_REG_DT_SIZE + BN_CANCEL_DT_SIZE + BN_RENEW_DT_SIZE,
-                   RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE + BN_STATUS_SIZE + 
-                           BN_REG_DT_SIZE + BN_CANCEL_DT_SIZE + BN_RENEW_DT_SIZE + BN_STATE_NUM_SIZE));
-           System.out.println(record.substring(RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE +
-                                                BN_STATUS_SIZE + BN_REG_DT_SIZE + BN_CANCEL_DT_SIZE +
-                                                BN_RENEW_DT_SIZE + BN_STATE_NUM_SIZE,
-                   RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE + BN_STATUS_SIZE + BN_REG_DT_SIZE +
-                           BN_CANCEL_DT_SIZE + BN_RENEW_DT_SIZE + BN_STATE_NUM_SIZE + BN_STATE_OF_REG_SIZE));
-           System.out.println(record.substring(RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE +
-                                                BN_STATUS_SIZE + BN_REG_DT_SIZE + BN_CANCEL_DT_SIZE +
-                                                BN_RENEW_DT_SIZE + BN_STATE_NUM_SIZE + BN_STATE_OF_REG_SIZE,
-                   RID_SIZE + REGISTER_NAME_SIZE + BN_NAME_SIZE + BN_STATUS_SIZE + BN_REG_DT_SIZE +
-                           BN_CANCEL_DT_SIZE + BN_RENEW_DT_SIZE + BN_STATE_NUM_SIZE + BN_STATE_OF_REG_SIZE + BN_ABN_SIZE));
-           return true;
+            System.out.println(record);
+            return true;
         } else {
             return false;
         }

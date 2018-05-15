@@ -1,3 +1,4 @@
+import java.io.DataOutputStream;
 import java.nio.ByteBuffer;
 import java.io.IOException;
 import java.io.FileNotFoundException;
@@ -37,7 +38,7 @@ public class hashload implements dbimpl
         }
     }
 
-    // check if pagesize is a valid integer
+    // Check if pagesize is a valid integer
     public boolean isInteger(String s)
     {
         boolean isValidInt = false;
@@ -51,7 +52,7 @@ public class hashload implements dbimpl
         return isValidInt;
     }
 
-   // read heapfile by page
+   // read heapfile as a whole and write the location of each record to "hash.<pagesize>" file
    public void writeIndex(int pagesize)
    {
         File heapfile = new File(HEAP_FNAME + pagesize);
@@ -65,34 +66,35 @@ public class hashload implements dbimpl
         boolean isNextRecord = true;
         
         //Buckets variables
-        int totalBuckets = (MAXIMUM_RECORDS * INDEX_SIZE / pagesize);
-        int modBucket = (MAXIMUM_RECORDS * INDEX_SIZE) % pagesize;
+        int totalBuckets = (MAXIMUM_RECORDS * SLOT_SIZE / pagesize);
+        int modBucket = (MAXIMUM_RECORDS * SLOT_SIZE) % pagesize;
         if (modBucket > 0) {
             totalBuckets++;
         }
         System.out.println("Total buckets: " + totalBuckets);
-        int recordsInPage = pagesize / INDEX_SIZE;
-        System.out.println("Number of records in one page: " + recordsInPage);
-        // Array of indexes that will be loaded into "hash.(pagesize)" file
-        int[][] indexes = new int[totalBuckets][recordsInPage];
+        // Maximum number of records in a bucket
+        int slotsInBucket = pagesize / SLOT_SIZE;
+        System.out.println("Number of records in one bucket: " + slotsInBucket);
+        // Array of indexes that will be loaded into "hash.<pagesize>" file
+        int[][] indexes = new int[totalBuckets][slotsInBucket];
         for (int i = 0; i < totalBuckets; i++) {
-            for (int j = 0; j < recordsInPage; j++) {
+            for (int j = 0; j < slotsInBucket; j++) {
                 indexes[i][j] = -1;
             }
         }
         
         try
         {
-            FileInputStream fis = new FileInputStream(heapfile);            
-            // reading page by page
+            FileInputStream fisHeap = new FileInputStream(heapfile);            
+            // Reading one page at a time
             while (isNextPage)
             {
                 byte[] bPage = new byte[pagesize];
                 byte[] bPageNum = new byte[intSize];
-                fis.read(bPage, 0, pagesize);
+                fisHeap.read(bPage, 0, pagesize);
                 System.arraycopy(bPage, bPage.length-intSize, bPageNum, 0, intSize);			
 
-                // reading by record, return true to read the next record
+                // Reading by record, return true to read the next record
                 isNextRecord = true;
                 while (isNextRecord)
                 {
@@ -109,13 +111,19 @@ public class hashload implements dbimpl
                         else {
                             // Bucket index to insert record position
                             int bucketIndex = hashRecord(bRecord, totalBuckets);
+                            // Position of the current slot in the bucket
                             int bucketIndexPosition = 0;
                             boolean insertRecord = false;
                             while (!insertRecord) {
+                                // If a slot in bucket is empty, then insert record location to the slot
                                 if (indexes[bucketIndex][bucketIndexPosition] == -1) {
                                     indexes[bucketIndex][bucketIndexPosition] = (pageCount * pagesize + rid * RECORD_SIZE);
                                     insertRecord = true;
-                                } else if (bucketIndexPosition == (recordsInPage - 1)) {
+                                }
+                                // If there is no empty slot in a bucket, look for empty slot in the next bucket
+                                else if (bucketIndexPosition == (slotsInBucket - 1)) {
+                                    // If there is still no empty slot in the remaining buckets,
+                                    // start looking from the first bucket
                                     if (bucketIndex == (totalBuckets - 1)) {
                                         bucketIndex = 0;
                                     } else {
@@ -140,25 +148,22 @@ public class hashload implements dbimpl
                         rid = 0;
                     }
                 }
-                // check to complete all pages
+                // Check if all pages have been scanned
                 if (ByteBuffer.wrap(bPageNum).getInt() != pageCount)
                 {
                     isNextPage = false;
-                    // Write indexes to the hash file
-                    FileOutputStream fos = new FileOutputStream(hashfile);                    
+                    // Write indexes to "hash.<pagesize>" file
+                    DataOutputStream dosHash = new DataOutputStream(new FileOutputStream(hashfile));
                     for (int i = 0; i < totalBuckets; i++) {
-                        for (int j = 0; j < recordsInPage; j++) {
-                            byte[] DATA = new byte[INDEX_SIZE];
-                            String entry = String.valueOf(indexes[i][j]);
-                            byte[] DATA_SRC = entry.trim().getBytes(ENCODING);
-                            System.arraycopy(DATA_SRC, 0, DATA, 0, DATA_SRC.length);
-                            fos.write(DATA);
+                        for (int j = 0; j < slotsInBucket; j++) {
+                            dosHash.writeInt(indexes[i][j]);
                         }
-                        //Add padding at the end of the page
-                        byte[] fPadding = new byte[pagesize - (recordsInPage * INDEX_SIZE)];
-                        fos.write(fPadding);
+                        //Add padding at the end of each page
+                        byte[] fPadding = new byte[pagesize - (slotsInBucket * SLOT_SIZE)];
+                        dosHash.write(fPadding);
                     }
-                    fos.close();
+                    dosHash.close();
+                    fisHeap.close();
                 }
                 pageCount++;		
             }
@@ -173,14 +178,14 @@ public class hashload implements dbimpl
       }
    }
 
-   // returns bucket index for a particular record
+   // Returns bucket index for a particular record
    public int hashRecord(byte[] rec, int totalBuckets)
    {
       String record = new String(rec);
-      String BN_NAME_SUBSTRING = record.substring(RID_SIZE+REGISTER_NAME_SIZE,
-                                            RID_SIZE+REGISTER_NAME_SIZE+BN_NAME_SIZE);
-      // Remove null characters before calculating the hash code
-      String BN_NAME = BN_NAME_SUBSTRING.replace("\0", "");
+      // Get the BN_NAME field only and remove null characters from BN_NAME field
+      String BN_NAME = record.substring(RID_SIZE+REGISTER_NAME_SIZE,
+                                        RID_SIZE+REGISTER_NAME_SIZE+BN_NAME_SIZE).replace("\0", "");
+      // Calculate bucket index and return the result
       int bucketNum = Math.abs(BN_NAME.toLowerCase().hashCode()) % totalBuckets;      
       return bucketNum;
    }   

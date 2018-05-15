@@ -23,7 +23,7 @@ public interface dbimpl
    public static final int EOF_PAGENUM_SIZE = 4;
    
    public static final int MAXIMUM_RECORDS = 3720000;
-   public static final int INDEX_SIZE = 10;
+   public static final int SLOT_SIZE = 4;
    public static final String HASH_FNAME = "hash.";
 
    public static final int BN_NAME_OFFSET = RID_SIZE
